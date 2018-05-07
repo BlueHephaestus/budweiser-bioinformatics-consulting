@@ -4,12 +4,14 @@ Generates a report for the counts of all LINE_NMs and their associated PROFILEs
     and as described both in "SOP for Data Conversion and Preparation of Purity Report.docx" 
     and through our direct discussions with Audrey from Budweiser.
 
+WARNING: Should be run AFTER generate_key.py generates the key.csv file in the same directory.
+
 -Blake Edwards / Dark Element
 """
 
 import pandas as pd
 import numpy as np
-#For now we don't do anything with standards since we don't have a standards key file
+from base import *
 
 #Only read in these columns
 data = pd.read_csv("GenoResults.csv", usecols=["DNA_PLATE", "WELL", "SAMPLE_ID", "PLANT_ID", "LINE_NM", "MARKER_NM", "Call"])
@@ -18,7 +20,8 @@ data = pd.read_csv("GenoResults.csv", usecols=["DNA_PLATE", "WELL", "SAMPLE_ID",
 data = data.dropna()
 
 #Get unique column values
-marker_nms = np.sort(np.unique(data["MARKER_NM"]))
+line_nms = np.unique(data["LINE_NM"])
+marker_nms = np.unique(data["MARKER_NM"])
 sample_ids = np.unique(data["SAMPLE_ID"])
 
 #Sort so that we group the same samples together, as well as order them.
@@ -81,122 +84,104 @@ data = data.drop(["MARKER_NM", "Call"], axis=1)
 data["PROFILE"] = data[[marker_nm for marker_nm in marker_nms]].apply(lambda x: ''.join(x), axis=1)
 
 """
-Create a mapping from PROFILE:LINE_NM using instances of each PROFILE for which PROFILE is
-    only As and Bs, i.e. the PROFILE is complete and has no errors.
-    
-For every LINE_NM entry, get the associated PROFILE if it has no errors.
-
-Since there are often several errors in PROFILE values, we have to find the true PROFILE for each LINE_NM
-    value. We do this by counting the instances of each non-error PROFILE for each LINE_NM,
-    and then obtaining the true profile via the PROFILE which occurs most often.
-    
-Since often times the counts will be similar to [893, 2, 1, 2, 1] due to most being correct, but
-    there still being a few errors, in the above case 6 errors.
+We load our key.csv file from the previous generate_key.py script, made to map each LINE_NM
+    value to each possible PROFILE it may have.
 """
-#Mapping dictionary to find the true PROFILE for each LINE_NM value.
-line_nms = {}
-
-#Create these ahead of time to avoid checks in the loop
-for line_nm in np.unique(data["LINE_NM"]):
-    line_nms[line_nm] = {}
-
-def profile_is_valid(profile):
-    #Ensure profile is complete and has no errors, i.e. is only made up of A or B characters.
-    valid = True
-    for c in profile:
-        if c not in ["A", "B"]:
-            valid = False
-            break
-    return valid
-            
-for i, row in data.iterrows():
-    profile = row["PROFILE"]
+try:
+    profiles_key = pd.read_csv("key.csv")
+except:
+    print("YOU MUST FIRST RUN `python3 generate_key.py` TO GENERATE A key.csv FILE")
     
-    #If it's not valid, move on to the next one.
-    if not profile_is_valid(profile):
-        continue
-
-    #Otherwise, increment this profile's count in its respective line_nm entry in our line_nms dictionary,
-    #setting its count to 1 if it doesn't already exist.
-    line_nm = row["LINE_NM"]
-    if profile in line_nms[line_nm]:
-        line_nms[line_nm][profile] +=1
-    else:
-        line_nms[line_nm][profile] = 1
-        
-
 """
-Get the true profile for each line_nm, and insert the true profile into a new mapping dictionary,
-    made to map from profile:line_nm for each sample_id value.
+We create a new mapping dictionary, to keep track of the number of times
+    each LINE_NM maps to each of it's possible PROFILEs as described by the profiles_key
+    for each SAMPLE_ID, as well as to keep track of the number of failures
+    for each SAMPLE_ID.
     
-Since it will also be used to count the number of each true profile (and failures) for each sample_id,
-    we also duplicate this mapping across each unique SAMPLE_ID and store a count value for each mapping as well, 
-    initialized to 0.
-    
-So it will be of the form sample_id:profile:{LINE_NM:line_nm, COUNT:count}
+We have a failure whenever the PROFILE is not valid, i.e. is not AA, BB, or AB,
+    or whenever the PROFILE is not one of the profiles associated with the LINE_NM.
+
+This mapping dictionary will be of the form:
+    sample_id:line_nm:{profile1:count1, profile2:count2}
 """
-        
 #Mapping dictionary for all profiles and sample_ids
 profiles = {}
 
 #Add dictionaries for all unique sample_ids to avoid checks in the loop,
 #And to add an entry to count failures.
-
 for sample_id in sample_ids:
-    profiles[sample_id] = {"FAIL":{"COUNT":0}}
+    profiles[sample_id] = {"FAIL":0}
+
+#Additionally add dictionaries for all unique line_nms to avoid checks in the loop
+for sample_id in sample_ids:
+    for line_nm in np.unique(profiles_key["LINE_NM"]):
+        profiles[sample_id][line_nm] = {}
+
+#Add the line_nm:{profile1:count1, profile2:count2,...} mapping for every sample_id in the profiles dict
+for i, row in profiles_key.iterrows():
     
-#Add true profile : line_nm, count mapping to every sample_id in the profiles dict.
-for line_nm,profile_counts in line_nms.items():
-    true_profile = max(profile_counts, key=(lambda key: profile_counts[key]))
-    for sample_id in sample_ids:
-        profiles[sample_id][true_profile] = {"LINE_NM":line_nm, "COUNT":0}
+    #Create profile only from the MARKER_NM values present in our data.
+    profile = ""
+    for marker_nm in marker_nms:
+        profile+=row[marker_nm]
+    
+    #Insert completed profile with 0 initial count for every sample_id
+    for sample_id in sample_ids:        
+        profiles[sample_id][row["LINE_NM"]][profile] = 0    
 
 #for each row in our data:
 for i, row in data.iterrows():
     sample_id = row["SAMPLE_ID"]
+    line_nm = row["LINE_NM"]
     profile = row["PROFILE"]
     #if the profile has an error:
     if not profile_is_valid(profile):
-        #we increment the FAIL count in the profiles dict for this row's sample_id and continue
-        profiles[sample_id]["FAIL"]["COUNT"]+=1
+        #we increment the FAIL count in the profiles dict for this row's SAMPLE_ID and continue
+        profiles[sample_id]["FAIL"]+=1
         continue
     
-    #if the profile is not in our profiles dict for this row's sample_id:
-    if profile not in profiles[sample_id]:
-        #we increment the FAIL count in the profiles dict for this row's sample_id and continue
-        profiles[sample_id]["FAIL"]["COUNT"]+=1
-        continue
-    
-    #if the line_nm the profile maps to is not the same as the line_nm for this row:
-    if profiles[sample_id][profile]["LINE_NM"] != row["LINE_NM"]:
-        #we increment the FAIL count in the profiles dict for this row's sample_id and continue
-        profiles[sample_id]["FAIL"]["COUNT"]+=1
+    #If the PROFILE is not one of the profiles associated with the LINE_NM for this row's SAMPLE_ID:
+    if profile not in profiles[sample_id][line_nm]:
+        #we increment the FAIL count in the profiles dict for this row's SAMPLE_ID and continue
+        profiles[sample_id]["FAIL"]+=1
         continue
         
-    #Otherwise, we increment the count in the profiles dict for this profile and sample id
-    profiles[sample_id][profile]["COUNT"]+=1
-    
-#Get percentages of each COUNT relative to the total counts for each sample_id, 
-#    and add this entry alongside each COUNT
+    #Otherwise, we increment the count in the profiles dict for this LINE_NM's PROFILE and SAMPLE_ID
+    profiles[sample_id][line_nm][profile]+=1
+
+#Get percentages of each count relative to the total counts for each sample_id, 
+#    and replace each count with a (count, percentage) tuple
 for sample_id in sample_ids:
-    #Get sum of counts in this sample_id
-    count_sum = 0
-    for profile in profiles[sample_id]:
-        count_sum += profiles[sample_id][profile]["COUNT"]
+    #Get total sum of all profile counts in this sample_id
+    count_sum = profiles[sample_id]["FAIL"]
+    for line_nm in line_nms:
+        for profile in profiles[sample_id][line_nm].keys():
+            count_sum += profiles[sample_id][line_nm][profile]
     
-    #Use sum of counts to add PERCENTAGE attribute
-    for profile in profiles[sample_id]:
-        profiles[sample_id][profile]["PERCENTAGE"] = profiles[sample_id][profile]["COUNT"]/count_sum*100
+    #Use sum of counts to replace counts with (count, percentage) tuples
+    for line_nm in line_nms:
+        for profile in profiles[sample_id][line_nm].keys():
+            profiles[sample_id][line_nm][profile] = (profiles[sample_id][line_nm][profile], 
+                                                     profiles[sample_id][line_nm][profile]/count_sum*100)
+    #Add fails
+    profiles[sample_id]["FAIL"] = (profiles[sample_id]["FAIL"], profiles[sample_id]["FAIL"]/count_sum*100)
         
 #Generate a report dataframe with our complete profiles dictionary
 report = pd.DataFrame(columns=["SAMPLE_ID", "LINE_NM", "PROFILE", "COUNT", "PERCENTAGE"])
 for sample_id in sample_ids:
-    for profile,profile_data in sorted(profiles[sample_id].items()):
-        report = report.append({"SAMPLE_ID":sample_id, 
-                       "LINE_NM":profile_data["LINE_NM"] if "LINE_NM" in profile_data else "FAIL", 
-                       "PROFILE":profile, 
-                       "COUNT":profile_data["COUNT"], 
-                       "PERCENTAGE":profile_data["PERCENTAGE"]}, ignore_index=True)
+    for line_nm in line_nms:
+        for profile,profile_data in profiles[sample_id][line_nm].items():
+            report = report.append({"SAMPLE_ID":sample_id, 
+                           "LINE_NM":line_nm,
+                           "PROFILE":profile, 
+                           "COUNT":profile_data[0], 
+                           "PERCENTAGE":profile_data[1]}, ignore_index=True)
+    #Add fails
+    report = report.append({"SAMPLE_ID":sample_id, 
+                   "LINE_NM": "FAIL",
+                   "PROFILE":"", 
+                   "COUNT":profiles[sample_id]["FAIL"][0], 
+                   "PERCENTAGE":profiles[sample_id]["FAIL"][1]}, ignore_index=True)
         
 #Order the columns for data csv before writing
 data_cols = ["SAMPLE_ID", "DNA_PLATE", "WELL", "PLANT_ID", "LINE_NM"]
@@ -204,5 +189,5 @@ data_cols.extend([marker_nm for marker_nm in marker_nms])
 data_cols.append("PROFILE")
 
 #With both our report dataframe and condensed data dataframe finished, we write both to csvs.
-report.to_csv("automated_report.csv", index=False)
-data.to_csv("automated_supplemental_data.csv", columns=data_cols, index=False)
+report.to_csv("report.csv", index=False)
+data.to_csv("supplemental.csv", columns=data_cols, index=False)
