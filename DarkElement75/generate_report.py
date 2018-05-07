@@ -11,10 +11,14 @@ WARNING: Should be run AFTER generate_key.py generates the key.csv file in the s
 
 import pandas as pd
 import numpy as np
+import sys
 from base import *
 
 #Only read in these columns
-data = pd.read_csv("GenoResults.csv", usecols=["DNA_PLATE", "WELL", "SAMPLE_ID", "PLANT_ID", "LINE_NM", "MARKER_NM", "Call"])
+if len(sys.argv)>1:
+    data = pd.read_csv(sys.argv[1], usecols=["DNA_PLATE", "WELL", "SAMPLE_ID", "PLANT_ID", "LINE_NM", "MARKER_NM", "Call"])
+else:
+    data = pd.read_csv("GenoResults.csv", usecols=["DNA_PLATE", "WELL", "SAMPLE_ID", "PLANT_ID", "LINE_NM", "MARKER_NM", "Call"])
 
 #Remove all rows with empty entries
 data = data.dropna()

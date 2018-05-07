@@ -9,11 +9,15 @@ Generate a master key file, mapping each LINE_NM to a PROFILE value based on maj
 """
 import pandas as pd
 import numpy as np
+import sys
 from base import *
 
 #Read in file, with all columns except for PROJECT_NM, DNA_PLATE, PLANT_ID
 #We keep rows with empty entries, since they may have some valid entries.
-data = pd.read_excel("StandardsData.xlsx")
+if len(sys.argv)>1:
+    data = pd.read_excel(sys.argv[1])
+else:
+    data = pd.read_excel("StandardsData.xlsx")
 data = data.drop(["PROJECT_NM", "DNA_PLATE", "PLANT_ID"], axis=1)
 data = data.rename({"LINES":"LINE_NM"}, axis=1)
 
